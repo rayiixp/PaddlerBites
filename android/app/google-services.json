@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "1049652420108",
+    "project_id": "paddlerbites-1453d",
+    "storage_bucket": "paddlerbites-1453d.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1049652420108:android:61ea72948a30d9151c9829",
+        "android_client_info": {
+          "package_name": "com.example.paddlerbites"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "1049652420108-lpftni3qk9715qfm8nbeho0ce1kvbcfm.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.example.paddlerbites",
+            "certificate_hash": "ce07e19e7b7a284752ba53725381f07e5d1cc9e9"
+          }
+        },
+        {
+          "client_id": "1049652420108-2f492nrtkcbgh4af93f5ftu5b45djd3v.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAO-Y7SMYr_GbBN25j-uxQahD_0R7shT98"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "1049652420108-2f492nrtkcbgh4af93f5ftu5b45djd3v.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
