@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import '../../core/theme.dart';
+import '../../core/app_theme.dart';
 import 'vendor_home_screen.dart';
 import 'vendor_orders_screen.dart';
 import 'vendor_menu_screen.dart';
@@ -15,8 +15,8 @@ class VendorMainWrapper extends StatefulWidget {
 class _VendorMainWrapperState extends State<VendorMainWrapper> {
   int _selectedIndex = 0;
 
-  final List<Widget> _screens = [
-    const VendorHomeScreen(),
+  late final List<Widget> _screens = [
+    VendorHomeScreen(onOpenOrders: () => setState(() => _selectedIndex = 1)),
     const VendorOrdersScreen(),
     const VendorMenuScreen(),
     const VendorProfileScreen(),

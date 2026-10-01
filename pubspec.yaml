@@ -42,6 +42,21 @@ dependencies:
   google_sign_in: ^6.3.0
   provider: ^6.1.5+1
   flutter_svg: ^2.0.10
+  image_picker: ^1.2.3
+  # 0.8.13+17 switched to Kotlin Pigeon and fails to compile with this
+  # project's Kotlin 2.1.20; unpin after upgrading the Android Kotlin plugin.
+  image_picker_android: 0.8.13+16
+  flutter_map: ^8.3.2
+  latlong2: ^0.10.1
+  geolocator: ^14.1.1
+  firebase_ai: ^4.0.0
+  http: ^1.6.0
+  # 13.x pulls permission_handler_android 14.x, which needs compileSdk 37 and a
+  # newer Kotlin Gradle plugin than this project's 2.1.20. Upgrade together
+  # with the Android toolchain.
+  permission_handler: ^12.0.3
+  record: ^6.2.1
+  path_provider: ^2.1.6
 
 dev_dependencies:
   flutter_test:

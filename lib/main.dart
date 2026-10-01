@@ -4,7 +4,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:provider/provider.dart';
 import 'firebase_options.dart';
-import 'core/theme.dart';
+import 'core/app_theme.dart';
 import 'auth_gate.dart';
 import 'providers/cart_provider.dart';
 import 'providers/user_provider.dart';
@@ -40,56 +40,37 @@ void main() async {
   );
 }
 
+/// Dev helper: seeds one approved, open stall with a menu item.
+/// Stall ids are the owning vendor's uid; menu items live in `menuItems`.
+// ignore: unused_element
 Future<void> _seedDatabase() async {
   final db = FirebaseFirestore.instance;
-  
-  final stall1 = await db.collection('stalls').add({
+
+  final stall = db.collection('stalls').doc('demo_vendor_uid');
+  await stall.set({
+    'ownerId': 'demo_vendor_uid',
     'stallName': 'Snackpreneurs',
+    'program': 'BSEntrep',
+    'category': 'Snacks',
+    'operatingHours': '7:00 AM - 5:00 PM',
+    'status': 'Active',
     'isOpen': true,
     'rating': 4.8,
-    'category': 'Snacks',
-    'imageUrl': 'https://images.unsplash.com/photo-1594212699903-ec8a3eca50f5?w=500&q=80',
-    'totalOrders': 214,
+    'totalOrders': 0,
+    'imageUrl': '',
+    'pickupPoint': const GeoPoint(9.1163954, 125.5346985),
   });
 
-  final stall2 = await db.collection('stalls').add({
-    'stallName': 'Taste Venture',
-    'isOpen': true,
-    'rating': 4.9,
-    'category': 'Meals',
-    'imageUrl': 'https://images.unsplash.com/photo-1513104890138-7c749659a591?w=500&q=80',
-    'totalOrders': 180,
-  });
-
-  await stall1.collection('menuItems').add({
+  await db.collection('menuItems').add({
+    'stallId': stall.id,
+    'stallName': 'Snackpreneurs',
     'name': 'Cheese Burger',
+    'description': 'Beef patty, melted cheese, lettuce and tomato on a toasted bun.',
     'price': 30.00,
+    'category': 'Snacks',
     'isAvailable': true,
     'rating': 4.8,
-    'stallName': 'Snackpreneurs',
     'imageUrl': 'https://images.unsplash.com/photo-1568901346375-23c9450c58cd?w=500&q=80',
-  });
-
-  await db.collection('users').doc('admin_user').set({
-    'name': 'IT Admin',
-    'email': 'admin@csucc.edu.ph',
-    'role': 'admin',
-    'status': 'Active'
-  });
-
-  await db.collection('users').add({
-    'name': 'Juan Cruz',
-    'email': 'juan.cruz@csucc.edu.ph',
-    'role': 'delivery',
-    'status': 'Pending Review'
-  });
-
-  await db.collection('orders').add({
-    'status': 'Pending',
-    'totalPrice': 65.00,
-    'items': ['Cheese Burger', 'Fries'],
-    'createdAt': FieldValue.serverTimestamp(),
-    'deliveryLocation': 'BSIT Building, Room 204'
   });
 }
 

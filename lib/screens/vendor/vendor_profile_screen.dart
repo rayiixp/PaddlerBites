@@ -1,14 +1,40 @@
 import 'package:flutter/material.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:google_sign_in/google_sign_in.dart';
-import '../../core/theme.dart';
+import 'package:provider/provider.dart';
+import '../../core/errors.dart';
+import '../../core/app_theme.dart';
+import '../../models/models.dart';
+import '../../providers/user_provider.dart';
+import '../../services/catalog_service.dart';
+import '../../services/user_service.dart';
+import '../../widgets/app_image.dart';
+import '../../widgets/custom_dialogs.dart';
 import 'vendor_sales_report_screen.dart';
+import 'vendor_setup_screen.dart';
 
 class VendorProfileScreen extends StatelessWidget {
   const VendorProfileScreen({super.key});
 
+  Future<void> _updateStall(BuildContext context, Map<String, dynamic> data) async {
+    try {
+      await CatalogService.updateStall(UserService.uid, data);
+    } catch (e) {
+      if (context.mounted) showAppSnackBar(context, 'Could not save. ${friendlyError(e)}', isError: true);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    return StreamBuilder<StallModel?>(
+      stream: CatalogService.stallStream(UserService.uid),
+      builder: (context, snapshot) {
+        final stall = snapshot.data;
+        final userData = context.watch<UserProvider>().userData ?? {};
+        return _buildScaffold(context, stall, userData);
+      },
+    );
+  }
+
+  Widget _buildScaffold(BuildContext context, StallModel? stall, Map<String, dynamic> userData) {
     return Scaffold(
       backgroundColor: AppTheme.backgroundColor, // Matches the theme background color
       appBar: AppBar(
@@ -28,26 +54,23 @@ class VendorProfileScreen extends StatelessWidget {
             Center(
               child: Column(
                 children: [
-                  Container(
-                    width: 90,
-                    height: 90,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF0D3B2E),
-                      borderRadius: BorderRadius.circular(26),
-                    ),
-                    child: const Center(child: Icon(Icons.storefront_outlined, color: AppTheme.primaryColor, size: 45)),
-                  ),
+                  StallLogo(imageUrl: stall?.imageUrl ?? '', size: 90, radius: 26),
                   const SizedBox(height: 12),
-                  const Text('Snackpreneurs', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.black)),
+                  Text(stall?.name ?? 'My stall', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.black)),
                   const SizedBox(height: 4),
                   Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      const Text('BSEntrep', style: TextStyle(color: Colors.grey, fontSize: 14)),
-                      const SizedBox(width: 8),
+                      if (stall?.program.isNotEmpty ?? false) ...[
+                        Text(stall!.program, style: const TextStyle(color: Colors.grey, fontSize: 14)),
+                        const SizedBox(width: 8),
+                      ],
                       const Icon(Icons.star, color: Colors.amber, size: 14),
                       const SizedBox(width: 4),
-                      Text('4.8', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.black87)),
+                      Text(
+                        (stall?.rating ?? 0) > 0 ? stall!.rating.toStringAsFixed(1) : 'New',
+                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.black87),
+                      ),
                     ],
                   ),
                 ],
@@ -67,27 +90,57 @@ class VendorProfileScreen extends StatelessWidget {
                 context: context,
                 icon: Icons.edit_note_outlined,
                 title: 'Edit stall info',
-                onTap: () {},
+                onTap: stall == null
+                    ? null
+                    : () => Navigator.push(
+                        context, MaterialPageRoute(builder: (context) => VendorSetupScreen(existing: stall))),
               ),
               _buildMenuItem(
                 context: context,
                 icon: Icons.access_time_outlined,
                 title: 'Operating hours',
-                onTap: () {},
+                onTap: () async {
+                  final hours = await showTextInputDialog(
+                    context,
+                    title: 'Operating hours',
+                    initialValue: stall?.operatingHours ?? '',
+                    hint: '7:00 AM - 5:00 PM',
+                  );
+                  if (hours != null && context.mounted) await _updateStall(context, {'operatingHours': hours});
+                },
               ),
               _buildMenuItem(
                 context: context,
                 icon: Icons.payment_outlined,
                 title: 'Payout account',
-                onTap: () {},
+                onTap: () async {
+                  final account = await showTextInputDialog(
+                    context,
+                    title: 'GCash payout number',
+                    initialValue: stall?.payoutAccount ?? '',
+                    hint: '09XX-XXX-XXXX',
+                    keyboardType: TextInputType.phone,
+                  );
+                  if (account != null && context.mounted) await _updateStall(context, {'payoutAccount': account});
+                },
               ),
             ]),
             const SizedBox(height: 16),
 
             // Section 2: Toggles Grouped in a Single White Card
             _buildSection([
-              _buildToggleItem(Icons.notifications_active_outlined, 'Order notifications', true),
-              _buildToggleItem(Icons.store_mall_directory_outlined, 'Stall open', true),
+              _buildToggleItem(
+                Icons.notifications_active_outlined,
+                'Order notifications',
+                userData['orderNotifications'] ?? true,
+                (v) => runGuarded(context, () => UserService.currentUserRef.update({'orderNotifications': v})),
+              ),
+              _buildToggleItem(
+                Icons.store_mall_directory_outlined,
+                'Stall open',
+                stall?.isOpen ?? false,
+                stall == null ? null : (v) => _updateStall(context, {'isOpen': v}),
+              ),
             ]),
             const SizedBox(height: 16),
 
@@ -98,7 +151,7 @@ class VendorProfileScreen extends StatelessWidget {
                 icon: Icons.swap_horiz,
                 title: 'Switch role',
                 onTap: () {
-                  Navigator.of(context).pushNamedAndRemoveUntil('/role-selection', (route) => false);
+                  Navigator.pushNamed(context, '/role-selection');
                 },
               ),
               _buildMenuItem(
@@ -107,10 +160,9 @@ class VendorProfileScreen extends StatelessWidget {
                 title: 'Logout',
                 textColor: Colors.redAccent,
                 onTap: () async {
-                  await GoogleSignIn().signOut();
-                  await FirebaseAuth.instance.signOut();
+                  await UserService.signOut();
                   if (context.mounted) {
-                    Navigator.of(context).pushNamedAndRemoveUntil('/role-selection', (route) => false);
+                    Navigator.of(context).pushNamedAndRemoveUntil('/', (route) => false);
                   }
                 },
               ),
@@ -163,7 +215,7 @@ class VendorProfileScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildToggleItem(IconData icon, String title, bool value) {
+  Widget _buildToggleItem(IconData icon, String title, bool value, ValueChanged<bool>? onChanged) {
     return ListTile(
       contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
       leading: Icon(icon, color: Colors.black87, size: 24),
@@ -175,7 +227,7 @@ class VendorProfileScreen extends StatelessWidget {
         scale: 0.85,
         child: Switch(
           value: value,
-          onChanged: (v) {},
+          onChanged: onChanged,
           activeColor: Colors.white,
           activeTrackColor: Colors.black,
           inactiveThumbColor: Colors.white,

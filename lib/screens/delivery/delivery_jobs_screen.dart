@@ -1,70 +1,64 @@
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:provider/provider.dart';
+import '../../models/models.dart';
+import '../../providers/user_provider.dart';
+import '../../services/order_service.dart';
+import '../../services/user_service.dart';
 import 'delivery_home_screen.dart';
 
-class DeliveryJobsScreen extends StatelessWidget {
+class DeliveryJobsScreen extends StatefulWidget {
   const DeliveryJobsScreen({super.key});
 
   @override
+  State<DeliveryJobsScreen> createState() => _DeliveryJobsScreenState();
+}
+
+class _DeliveryJobsScreenState extends State<DeliveryJobsScreen> {
+  final _myOrders = OrderService.riderOrders(UserService.uid);
+
+  @override
   Widget build(BuildContext context) {
+    final isOnline = context.watch<UserProvider>().userData?['isOnline'] ?? false;
+
     return Scaffold(
       body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('Delivery Jobs', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 8),
-              Text('Available orders ready for pickup', style: TextStyle(color: Colors.grey.shade600, fontSize: 14)),
-              const SizedBox(height: 24),
-              StreamBuilder<QuerySnapshot>(
-                stream: FirebaseFirestore.instance
-                    .collection('orders')
-                    .where('status', isEqualTo: 'Ready')
-                    .snapshots(),
-                builder: (context, snapshot) {
-                  if (snapshot.connectionState == ConnectionState.waiting) {
-                    return const Center(child: CircularProgressIndicator());
-                  }
-                  if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-                    return Center(
+        child: StreamBuilder<List<OrderModel>>(
+          stream: _myOrders,
+          builder: (context, snapshot) {
+            final activeJobs = (snapshot.data ?? []).where((o) => OrderStatus.riderActive.contains(o.status)).toList();
+            return SingleChildScrollView(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Delivery Jobs', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 8),
+                  Text('Available orders ready for pickup', style: TextStyle(color: Colors.grey.shade600, fontSize: 14)),
+                  const SizedBox(height: 24),
+                  if (activeJobs.isNotEmpty) ...[
+                    const Text('My active job', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 16),
+                    ...activeJobs.map((order) => Padding(
+                          padding: const EdgeInsets.only(bottom: 16),
+                          child: buildActiveJobCard(context, order),
+                        )),
+                    const SizedBox(height: 16),
+                  ],
+                  if (isOnline)
+                    AvailableDeliveriesList(hasActiveJob: activeJobs.isNotEmpty)
+                  else
+                    Center(
                       child: Padding(
                         padding: const EdgeInsets.all(48.0),
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(Icons.assignment_outlined, size: 64, color: Colors.grey.shade300),
-                            const SizedBox(height: 16),
-                            Text('No active jobs right now', style: TextStyle(color: Colors.grey.shade500, fontSize: 16, fontWeight: FontWeight.w500)),
-                            const SizedBox(height: 8),
-                            Text('Check back soon for new order pickup requests', style: TextStyle(color: Colors.grey.shade400, fontSize: 12), textAlign: TextAlign.center),
-                          ],
-                        ),
+                        child: Text('You are offline. Go online on the Home tab to receive jobs.',
+                            textAlign: TextAlign.center, style: TextStyle(color: Colors.grey.shade500)),
                       ),
-                    );
-                  }
-                  final readyOrders = snapshot.data!.docs;
-                  return Column(
-                    children: readyOrders.map((doc) {
-                      final data = doc.data() as Map<String, dynamic>;
-                      return Padding(
-                        padding: const EdgeInsets.only(bottom: 16),
-                        child: buildDeliveryJobCard(
-                          context: context,
-                          docId: doc.id,
-                          stall: data['stallName'] ?? 'Campus Stall',
-                          fee: '₱15 fee',
-                          details: 'Drop-off: ${data['deliveryLocation'] ?? 'CSU Campus'}',
-                        ),
-                      );
-                    }).toList(),
-                  );
-                },
+                    ),
+                  const SizedBox(height: 100),
+                ],
               ),
-              const SizedBox(height: 100),
-            ],
-          ),
+            );
+          },
         ),
       ),
     );

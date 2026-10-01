@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import '../../core/theme.dart';
+import '../../core/app_theme.dart';
 import 'delivery_home_screen.dart';
 import 'delivery_jobs_screen.dart';
 import 'delivery_wallet_screen.dart';
@@ -15,11 +15,11 @@ class DeliveryMainWrapper extends StatefulWidget {
 class _DeliveryMainWrapperState extends State<DeliveryMainWrapper> {
   int _selectedIndex = 0;
 
-  final List<Widget> _screens = [
+  late final List<Widget> _screens = [
     const DeliveryHomeScreen(),
     const DeliveryJobsScreen(),
     const DeliveryWalletScreen(),
-    const DeliveryProfileScreen(),
+    DeliveryProfileScreen(onOpenWallet: () => setState(() => _selectedIndex = 2)),
   ];
 
   @override

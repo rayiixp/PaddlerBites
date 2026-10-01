@@ -17,12 +17,23 @@ subprojects {
     
     plugins.withId("org.jetbrains.kotlin.android") {
         project.tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile::class.java).configureEach {
-            kotlinOptions {
-                freeCompilerArgs += listOf("-Xskip-metadata-version-check")
+            compilerOptions {
+                freeCompilerArgs.addAll(listOf("-Xskip-metadata-version-check"))
             }
         }
     }
+
+    pluginManager.withPlugin("com.android.library") {
+        val androidExtension = extensions.findByName("android")
+        if (androidExtension != null) {
+            try {
+                val setCompileSdk = androidExtension.javaClass.getMethod("setCompileSdk", Int::class.java)
+                setCompileSdk.invoke(androidExtension, 36)
+            } catch (_: Exception) {}
+        }
+    }
 }
+
 subprojects {
     project.evaluationDependsOn(":app")
 }

@@ -1,25 +1,37 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import '../../core/theme.dart';
+import '../../core/app_theme.dart';
 import '../../models/models.dart';
+import '../../services/catalog_service.dart';
+import '../../widgets/app_image.dart';
+import '../../widgets/menu_grid_item.dart';
 
-class StallDetailScreen extends StatelessWidget {
+class StallDetailScreen extends StatefulWidget {
   const StallDetailScreen({super.key});
 
   @override
+  State<StallDetailScreen> createState() => _StallDetailScreenState();
+}
+
+class _StallDetailScreenState extends State<StallDetailScreen> {
+  late final StallModel _initialStall = ModalRoute.of(context)!.settings.arguments as StallModel;
+  late final Stream<StallModel?> _stall = CatalogService.stallStream(_initialStall.id);
+  late final Stream<List<FoodModel>> _menu = CatalogService.stallMenu(_initialStall.id);
+  String _query = '';
+  String _category = 'All';
+
+  @override
   Widget build(BuildContext context) {
-    final stall = ModalRoute.of(context)!.settings.arguments as StallModel;
+    // Live stall doc so open/closed changes show up while browsing.
+    return StreamBuilder<StallModel?>(
+      stream: _stall,
+      initialData: _initialStall,
+      builder: (context, snapshot) => _buildPage(snapshot.data ?? _initialStall),
+    );
+  }
 
-    // Dummy menu items for this stall
-    final List<FoodModel> stallMenu = [
-      FoodModel(name: 'Cheese Burger', stallName: stall.name, price: 30.00, rating: 4.8, imageUrl: 'https://images.unsplash.com/photo-1568901346375-23c9450c58cd?w=500&q=80'),
-      FoodModel(name: 'Fried Chicken', stallName: stall.name, price: 50.00, rating: 4.7, imageUrl: 'https://images.unsplash.com/photo-1626082927389-6cd097cdc6ec?w=500&q=80'),
-      FoodModel(name: 'Fries', stallName: stall.name, price: 35.00, rating: 4.6, imageUrl: 'https://images.unsplash.com/photo-1573080496219-bb080dd4f877?w=500&q=80'),
-      FoodModel(name: 'Orange Juice', stallName: stall.name, price: 20.00, rating: 4.5, imageUrl: 'https://images.unsplash.com/photo-1613478223719-2ab802602423?w=500&q=80'),
-      FoodModel(name: 'Spaghetti', stallName: stall.name, price: 70.00, rating: 4.7, imageUrl: 'https://images.unsplash.com/photo-1589187151032-573a91d17046?w=500&q=80'),
-      FoodModel(name: 'Banana Cue', stallName: stall.name, price: 10.00, rating: 4.9, imageUrl: 'https://images.unsplash.com/photo-1632731805562-b91a789c62c9?w=500&q=80'),
-    ];
-
+  Widget _buildPage(StallModel stall) {
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: SystemUiOverlayStyle.dark,
       child: Scaffold(
@@ -56,18 +68,13 @@ class StallDetailScreen extends StatelessWidget {
                   Positioned(
                     bottom: -35,
                     child: Container(
-                      height: 85,
-                      width: 85,
                       decoration: BoxDecoration(
-                        color: stall.bgColor,
                         borderRadius: BorderRadius.circular(20),
                         boxShadow: [
                           BoxShadow(color: Colors.black.withOpacity(0.08), blurRadius: 10, offset: const Offset(0, 4)),
                         ],
                       ),
-                      child: Center(
-                        child: Image.asset(stall.logoPath, height: 50, fit: BoxFit.contain),
-                      ),
+                      child: StallLogo(imageUrl: stall.imageUrl, size: 85, radius: 20, bgColor: stall.bgColor),
                     ),
                   ),
                 ],
@@ -77,17 +84,45 @@ class StallDetailScreen extends StatelessWidget {
 
               // Stall Info
               Text(stall.name, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.black)),
-              const SizedBox(height: 2),
-              const Text('BSEntrep', style: TextStyle(color: Colors.grey, fontSize: 14)),
+              if (stall.program.isNotEmpty) ...[
+                const SizedBox(height: 2),
+                Text(stall.program, style: const TextStyle(color: Colors.grey, fontSize: 14)),
+              ],
               const SizedBox(height: 6),
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   const Icon(Icons.star, color: Colors.amber, size: 16),
                   const SizedBox(width: 4),
-                  Text(stall.rating.toString(), style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+                  Text(stall.rating > 0 ? stall.rating.toStringAsFixed(1) : 'New',
+                      style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+                  if (stall.operatingHours.isNotEmpty) ...[
+                    const SizedBox(width: 12),
+                    Icon(Icons.access_time, color: Colors.grey.shade500, size: 14),
+                    const SizedBox(width: 4),
+                    Text(stall.operatingHours, style: const TextStyle(color: Colors.grey, fontSize: 13)),
+                  ],
                 ],
               ),
+
+              if (!stall.isOpen) ...[
+                const SizedBox(height: 16),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 24),
+                  child: Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(color: Colors.orange.shade50, borderRadius: BorderRadius.circular(16)),
+                    child: const Row(
+                      children: [
+                        Icon(Icons.storefront_outlined, color: Colors.orange),
+                        SizedBox(width: 12),
+                        Expanded(child: Text('This stall is closed right now. You can browse, but ordering is paused.')),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
 
               const SizedBox(height: 24),
 
@@ -108,19 +143,36 @@ class StallDetailScreen extends StatelessWidget {
                         children: [
                           Icon(Icons.search, color: Colors.grey.shade400, size: 22),
                           const SizedBox(width: 12),
-                          Text('Search food from this stall...', style: TextStyle(color: Colors.grey.shade400, fontSize: 14)),
+                          Expanded(
+                            child: TextField(
+                              onChanged: (value) => setState(() => _query = value.trim().toLowerCase()),
+                              decoration: InputDecoration(
+                                hintText: 'Search food from this stall...',
+                                hintStyle: TextStyle(color: Colors.grey.shade400, fontSize: 14),
+                                border: InputBorder.none,
+                                isDense: true,
+                                contentPadding: EdgeInsets.zero,
+                              ),
+                            ),
+                          ),
                         ],
                       ),
                     ),
                     const SizedBox(height: 16),
-                    const Row(
-                      children: [
-                        CategoryChip(label: 'All', isActive: true),
-                        SizedBox(width: 8),
-                        CategoryChip(label: 'Snacks', isActive: false),
-                        SizedBox(width: 8),
-                        CategoryChip(label: 'Drinks', isActive: false),
-                      ],
+                    SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Row(
+                        children: ['All', ...kMenuCategories]
+                            .map((cat) => Padding(
+                                  padding: const EdgeInsets.only(right: 8),
+                                  child: CategoryChip(
+                                    label: cat,
+                                    isActive: _category == cat,
+                                    onTap: () => setState(() => _category = cat),
+                                  ),
+                                ))
+                            .toList(),
+                      ),
                     ),
                   ],
                 ),
@@ -138,69 +190,54 @@ class StallDetailScreen extends StatelessWidget {
               ),
               const SizedBox(height: 14),
 
-              // Menu Grid
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 24),
-                child: GridView.builder(
-                  padding: const EdgeInsets.only(bottom: 40),
-                  shrinkWrap: true,
-                  physics: const NeverScrollableScrollPhysics(),
-                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 2,
-                    crossAxisSpacing: 16,
-                    mainAxisSpacing: 20,
-                    childAspectRatio: 0.82,
-                  ),
-                  itemCount: stallMenu.length,
-                  itemBuilder: (context, index) => _buildMenuItem(context, stallMenu[index]),
-                ),
+              // Menu Grid — exactly what the vendor has published, in real time
+              StreamBuilder<List<FoodModel>>(
+                stream: _menu,
+                builder: (context, snapshot) {
+                  if (snapshot.hasError) {
+                    return Padding(padding: const EdgeInsets.all(24), child: Text('Could not load menu: ${snapshot.error}'));
+                  }
+                  if (!snapshot.hasData) {
+                    return const Padding(padding: EdgeInsets.all(40), child: CircularProgressIndicator());
+                  }
+                  final menu = snapshot.data!
+                      .where((f) => _category == 'All' || f.category == _category)
+                      .where((f) => _query.isEmpty || f.name.toLowerCase().contains(_query))
+                      .toList();
+                  // Available items first; sort is stable so names stay alphabetical.
+                  mergeSort(menu, compare: (a, b) => (a.isAvailable ? 0 : 1) - (b.isAvailable ? 0 : 1));
+
+                  if (menu.isEmpty) {
+                    return Padding(
+                      padding: const EdgeInsets.fromLTRB(24, 24, 24, 40),
+                      child: Text(
+                        snapshot.data!.isEmpty ? 'This stall hasn\'t added any items yet' : 'No items match your search',
+                        style: TextStyle(color: Colors.grey.shade400),
+                      ),
+                    );
+                  }
+
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 24),
+                    child: GridView.builder(
+                      padding: const EdgeInsets.only(bottom: 40),
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: 2,
+                        crossAxisSpacing: 16,
+                        mainAxisSpacing: 20,
+                        childAspectRatio: 0.82,
+                      ),
+                      itemCount: menu.length,
+                      itemBuilder: (context, index) => MenuGridItem(food: menu[index], canOrder: stall.isOpen),
+                    ),
+                  );
+                },
               ),
             ],
           ),
         ),
-      ),
-    );
-  }
-
-  Widget _buildMenuItem(BuildContext context, FoodModel food) {
-    return GestureDetector(
-      onTap: () => Navigator.pushNamed(context, '/food-detail', arguments: food),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Expanded(
-            child: Stack(
-              clipBehavior: Clip.none,
-              children: [
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(16),
-                  child: Image.network(
-                    food.imageUrl,
-                    width: double.infinity,
-                    height: double.infinity,
-                    fit: BoxFit.cover,
-                  ),
-                ),
-                Positioned(
-                  bottom: 8,
-                  right: 8,
-                  child: Container(
-                    padding: const EdgeInsets.all(4),
-                    decoration: const BoxDecoration(
-                      color: Colors.white,
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(Icons.add, size: 18, color: Colors.black),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(food.name, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-          const SizedBox(height: 2),
-          Text('₱${food.price.toStringAsFixed(2)}', style: const TextStyle(color: AppTheme.secondaryColor, fontWeight: FontWeight.bold, fontSize: 13)),
-        ],
       ),
     );
   }
@@ -224,22 +261,26 @@ class HeaderClipper extends CustomClipper<Path> {
 class CategoryChip extends StatelessWidget {
   final String label;
   final bool isActive;
-  const CategoryChip({super.key, required this.label, required this.isActive});
+  final VoidCallback? onTap;
+  const CategoryChip({super.key, required this.label, required this.isActive, this.onTap});
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 10),
-      decoration: BoxDecoration(
-        color: isActive ? Colors.black : Colors.white,
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Text(
-        label,
-        style: TextStyle(
-          color: isActive ? Colors.white : Colors.black,
-          fontWeight: FontWeight.w500,
-          fontSize: 14,
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 10),
+        decoration: BoxDecoration(
+          color: isActive ? Colors.black : Colors.white,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            color: isActive ? Colors.white : Colors.black,
+            fontWeight: FontWeight.w500,
+            fontSize: 14,
+          ),
         ),
       ),
     );

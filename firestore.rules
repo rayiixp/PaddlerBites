@@ -1,0 +1,335 @@
+rules_version = '2';
+
+// PaddlerBites security rules.
+//
+// Everyone must sign in with a @csucc.edu.ph account. On top of that:
+// - users/{uid}: you read and edit your own profile, but you can't approve
+//   your own roles or make yourself an admin; admins manage everyone.
+// - stalls / menuItems: readable by students; a vendor edits only their own
+//   stall (whose id is their uid) and its menu; approval stays with admins.
+// - orders: visible to the customer, the stall, the assigned rider (and
+//   approved riders while it waits for pickup); every status change is
+//   limited to the person whose turn it is.
+// - orders/{id}/messages: only the order's customer and rider can chat.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ------------------------------------------------------------ Helpers
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function campusUser() {
+      return signedIn()
+        && request.auth.token.email is string
+        && request.auth.token.email.lower().matches('.*@csucc[.]edu[.]ph');
+    }
+
+    function uid() {
+      return request.auth.uid;
+    }
+
+    function userPath(id) {
+      return /databases/$(database)/documents/users/$(id);
+    }
+
+    function me() {
+      return get(userPath(uid())).data;
+    }
+
+    function hasProfile() {
+      return campusUser() && exists(userPath(uid()));
+    }
+
+    function isAdmin() {
+      return hasProfile() && me().get('isAdmin', false) == true && me().get('adminSuspended', false) != true;
+    }
+
+    /// role: 'customer', 'vendor' or 'delivery'
+    function approvedAs(role) {
+      return hasProfile() && me().get(role + 'Status', null) == 'approved';
+    }
+
+    function changedKeys() {
+      return request.resource.data.diff(resource.data).affectedKeys();
+    }
+
+    function onlyChanged(keys) {
+      return changedKeys().hasOnly(keys);
+    }
+
+    function isString(value, maxLength) {
+      return value is string && value.size() <= maxLength;
+    }
+
+    // -------------------------------------------------------------- Users
+
+    match /users/{userId} {
+      function isSelf() {
+        return campusUser() && uid() == userId;
+      }
+
+      // New profiles start as customers only (AuthService.ensureProfile).
+      function validNewProfile() {
+        let d = request.resource.data;
+        return d.keys().hasOnly(['name', 'email', 'isCustomer', 'customerStatus', 'activeRole',
+                                 'schemaVersion', 'createdAt', 'updatedAt'])
+          && d.email == request.auth.token.email
+          && d.get('isCustomer', true) == true
+          && d.get('customerStatus', 'approved') == 'approved'
+          && d.get('activeRole', null) == null
+          && isString(d.get('name', ''), 100);
+      }
+
+      // Fields you may edit on your own profile. Approval fields can only
+      // move the way the app moves them (see the checks below).
+      function validSelfUpdate() {
+        let old = resource.data;
+        let d = request.resource.data;
+        let changed = changedKeys();
+        // Accounts created before multi-role support are upgraded once on
+        // sign-in (AppUser.migrationFor).
+        let migrating = old.get('schemaVersion', 0) != 2;
+        return changed.hasOnly([
+            // profile and settings
+            'name', 'email', 'studentId', 'contactNumber', 'idImageUrl', 'idImagePath',
+            'stallId', 'activeRole', 'isOnline', 'notificationsEnabled', 'deliveryMode',
+            'payoutAccount', 'deliveryAlerts', 'orderNotifications', 'updatedAt',
+            // role applications
+            'vendorStatus', 'deliveryStatus', 'vendorReviewNote', 'deliveryReviewNote',
+            'vendorAppliedAt', 'deliveryAppliedAt',
+            // one-time schema upgrade
+            'isCustomer', 'customerStatus', 'schemaVersion', 'role', 'status', 'reviewNote'
+          ])
+          && (!('email' in changed) || d.email == request.auth.token.email)
+          && (!('stallId' in changed) || d.stallId == userId)
+          && isString(d.get('name', ''), 100)
+          // Applying (or re-applying) for a role always means "pending".
+          && (!('vendorStatus' in changed) || d.get('vendorStatus', null) == 'pending'
+                || (migrating && !('vendorStatus' in d)))
+          && (!('deliveryStatus' in changed) || d.get('deliveryStatus', null) == 'pending'
+                || (migrating && !('deliveryStatus' in d)))
+          && (!('vendorReviewNote' in changed) || d.get('vendorReviewNote', '') == '' || migrating)
+          && (!('deliveryReviewNote' in changed) || d.get('deliveryReviewNote', '') == '' || migrating)
+          // Only the schema upgrade touches these, and it never grants more
+          // than customer access.
+          && (!('customerStatus' in changed) || (migrating && d.customerStatus in ['approved', 'suspended']
+                && old.get('customerStatus', null) in [null, 'approved', 'Active']))
+          && (!('isCustomer' in changed) || (migrating && d.isCustomer == true))
+          && (!('schemaVersion' in changed) || d.schemaVersion == 2)
+          && (!('role' in changed) || !('role' in d))
+          && (!('status' in changed) || !('status' in d))
+          && (!('reviewNote' in changed) || !('reviewNote' in d))
+          // You can only switch into a module you're approved for.
+          && (!('activeRole' in changed) || d.activeRole == null
+                || (d.activeRole in ['customer', 'vendor', 'delivery']
+                    && d.get(d.activeRole + 'Status', null) == 'approved'))
+          // Only approved riders can go online for jobs.
+          && (!('isOnline' in changed) || d.isOnline == false || d.get('deliveryStatus', null) == 'approved');
+      }
+
+      allow read: if isSelf() || isAdmin();
+      allow create: if isSelf() && validNewProfile();
+      allow update: if (isSelf() && validSelfUpdate()) || isAdmin();
+      allow delete: if false;
+
+      // Cart, favourites and recently viewed: private to the user.
+      match /{subcollection}/{docId} {
+        allow read, write: if isSelf();
+      }
+    }
+
+    // ------------------------------------------------------------- Stalls
+
+    match /stalls/{stallId} {
+      function isOwner() {
+        return campusUser() && uid() == stallId;
+      }
+
+      function validStallInfo(d) {
+        return isString(d.stallName, 60)
+          && isString(d.get('program', ''), 60)
+          && isString(d.get('category', ''), 40)
+          && isString(d.get('operatingHours', ''), 60)
+          && d.get('pickupPoint', null) is latlng;
+      }
+
+      allow read: if campusUser();
+
+      // First submission from the vendor setup screen: waits for review.
+      allow create: if (isOwner()
+          && validStallInfo(request.resource.data)
+          && request.resource.data.ownerId == stallId
+          && request.resource.data.status == 'Pending Review'
+          && request.resource.data.isOpen == false
+          && request.resource.data.get('rating', 0) == 0
+          && request.resource.data.get('totalOrders', 0) == 0)
+        || isAdmin();
+
+      allow update: if
+          // The owner edits details, re-submits for review and opens or
+          // closes the stall once it's approved.
+          (isOwner()
+            && onlyChanged(['stallName', 'program', 'category', 'operatingHours', 'pickupPoint',
+                            'imageUrl', 'imagePath', 'status', 'isOpen', 'submittedAt',
+                            'payoutAccount', 'updatedAt'])
+            && validStallInfo(request.resource.data)
+            && (!('status' in changedKeys()) || request.resource.data.status == 'Pending Review')
+            && (request.resource.data.isOpen == false || request.resource.data.status == 'Active'))
+          // A rider finishing a delivery bumps the stall's order count by one.
+          || (approvedAs('delivery')
+            && onlyChanged(['totalOrders'])
+            && request.resource.data.totalOrders == resource.data.get('totalOrders', 0) + 1)
+          || isAdmin();
+
+      allow delete: if isAdmin();
+    }
+
+    // --------------------------------------------------------- Menu items
+
+    match /menuItems/{itemId} {
+      function validItem(d) {
+        return d.stallId == uid()
+          && isString(d.name, 80)
+          && d.name.size() > 0
+          && isString(d.get('description', ''), 500)
+          && d.price is number && d.price > 0 && d.price <= 10000
+          && d.isAvailable is bool;
+      }
+
+      allow read: if campusUser();
+      allow create: if campusUser() && validItem(request.resource.data);
+      allow update: if (campusUser()
+            && resource.data.stallId == uid()
+            && validItem(request.resource.data)
+            && !('rating' in changedKeys()))
+        || isAdmin();
+      allow delete: if (campusUser() && resource.data.stallId == uid()) || isAdmin();
+    }
+
+    // ---------------------------------------------------- Uploaded images
+    // Fallback image store (FirestoreImageStore) while Storage isn't set up.
+
+    match /images/{imageId} {
+      allow read: if campusUser();
+      allow create: if campusUser()
+        && request.resource.data.ownerId == uid()
+        && request.resource.data.size is int
+        && request.resource.data.size <= 1000000;
+      allow update: if false;
+      allow delete: if (campusUser() && resource.data.ownerId == uid()) || isAdmin();
+    }
+
+    // ------------------------------------------------------------- Orders
+
+    match /orders/{orderId} {
+      function isCustomer() {
+        return campusUser() && resource.data.customerId == uid();
+      }
+
+      function isStall() {
+        return campusUser() && resource.data.stallId == uid();
+      }
+
+      function isRider() {
+        return campusUser() && resource.data.get('deliveryPersonId', null) == uid();
+      }
+
+      function moves(from, to) {
+        return resource.data.status == from && request.resource.data.status == to;
+      }
+
+      // Exactly what OrderService.placeOrders writes.
+      function validNewOrder() {
+        let d = request.resource.data;
+        let stall = get(/databases/$(database)/documents/stalls/$(d.stallId)).data;
+        return d.keys().hasOnly(['customerId', 'customerName', 'stallId', 'stallName', 'items',
+                                 'subtotal', 'deliveryFee', 'totalPrice', 'paymentMethod', 'status',
+                                 'deliveryLocation', 'deliveryPoint', 'pickupPoint',
+                                 'deliveryPersonId', 'createdAt', 'updatedAt'])
+          && d.customerId == uid()
+          && d.status == 'Pending'
+          && d.deliveryPersonId == null
+          && d.paymentMethod == 'COD'
+          && d.items is list && d.items.size() > 0 && d.items.size() <= 50
+          && d.subtotal is number && d.subtotal > 0
+          && d.deliveryFee is number && d.deliveryFee >= 0
+          && d.totalPrice == d.subtotal + d.deliveryFee
+          && isString(d.deliveryLocation, 120)
+          && d.deliveryPoint is latlng
+          && d.createdAt == request.time
+          && stall.status == 'Active'
+          && stall.isOpen == true;
+      }
+
+      allow read: if isCustomer() || isStall() || isRider() || isAdmin()
+        // Approved riders browse orders waiting for pickup.
+        || (resource.data.status == 'Ready' && approvedAs('delivery'));
+
+      allow create: if approvedAs('customer') && validNewOrder();
+
+      allow update: if
+          // Customer: cancel before the stall accepts, rate, report a problem.
+          (isCustomer() && moves('Pending', 'Cancelled')
+            && onlyChanged(['status', 'updatedAt', 'cancelledAt']))
+          || (isCustomer() && resource.data.status == 'Delivered'
+            && onlyChanged(['customerRating', 'ratedAt'])
+            && request.resource.data.customerRating is int
+            && request.resource.data.customerRating >= 1 && request.resource.data.customerRating <= 5)
+          || (isCustomer() && onlyChanged(['issueReport'])
+            && isString(request.resource.data.issueReport.message, 1000))
+          // Stall: accept or decline, then mark ready for pickup.
+          || (isStall()
+            && onlyChanged(['status', 'updatedAt', 'acceptedAt', 'readyAt', 'cancelledAt'])
+            && (moves('Pending', 'Preparing') || moves('Pending', 'Cancelled') || moves('Preparing', 'Ready')))
+          // Any approved rider: claim a ready order for themselves.
+          || (approvedAs('delivery') && moves('Ready', 'Picked up')
+            && resource.data.get('deliveryPersonId', null) == null
+            && request.resource.data.deliveryPersonId == uid()
+            && isString(request.resource.data.deliveryPersonName, 100)
+            && onlyChanged(['status', 'updatedAt', 'pickedUpAt', 'deliveryPersonId', 'deliveryPersonName']))
+          // Assigned rider: head out, then deliver.
+          || (isRider()
+            && onlyChanged(['status', 'updatedAt', 'departedAt', 'deliveredAt'])
+            && (moves('Picked up', 'On the way') || moves('On the way', 'Delivered')))
+          // Assigned rider: live GPS while carrying the order.
+          || (isRider() && resource.data.status in ['Picked up', 'On the way']
+            && onlyChanged(['riderLocation', 'riderLocationUpdatedAt'])
+            && request.resource.data.riderLocation is latlng)
+          || isAdmin();
+
+      allow delete: if false;
+
+      // Customer ↔ rider chat.
+      match /messages/{messageId} {
+        function order() {
+          return get(/databases/$(database)/documents/orders/$(orderId)).data;
+        }
+
+        function isParticipant() {
+          return campusUser()
+            && (order().customerId == uid() || order().get('deliveryPersonId', null) == uid());
+        }
+
+        allow read: if isParticipant() || isAdmin();
+
+        allow create: if isParticipant()
+          && order().status in ['Pending', 'Preparing', 'Ready', 'Picked up', 'On the way']
+          && order().get('deliveryPersonId', null) != null
+          && request.resource.data.keys().hasOnly(['senderId', 'senderName', 'senderRole', 'text',
+                                                   'sentAt', 'clientSentAt'])
+          && request.resource.data.senderId == uid()
+          && ((request.resource.data.senderRole == 'customer' && order().customerId == uid())
+              || (request.resource.data.senderRole == 'rider' && order().deliveryPersonId == uid()))
+          && isString(request.resource.data.senderName, 100)
+          && request.resource.data.text is string
+          && request.resource.data.text.size() > 0
+          && request.resource.data.text.size() <= 500
+          && request.resource.data.sentAt == request.time;
+
+        allow update, delete: if false;
+      }
+    }
+  }
+}

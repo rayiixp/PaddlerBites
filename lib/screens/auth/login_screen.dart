@@ -1,104 +1,61 @@
 import 'package:flutter/material.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import '../../core/theme.dart';
+import '../../core/errors.dart';
+import '../../services/auth_service.dart';
+import '../../widgets/custom_dialogs.dart';
 
+/// Email/password login and registration, restricted to @csucc.edu.ph.
+/// New accounts must verify their email before the app opens.
 class LoginScreen extends StatefulWidget {
-  final String initialRole;
-  const LoginScreen({super.key, required this.initialRole});
+  const LoginScreen({super.key});
 
   @override
   State<LoginScreen> createState() => _LoginScreenState();
 }
 
 class _LoginScreenState extends State<LoginScreen> {
+  final _nameController = TextEditingController();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   bool _isLogin = true;
   bool _isLoading = false;
 
-  final String _institutionalDomain = '@csucc.edu.ph';
+  final String _institutionalDomain = AuthService.institutionalDomain;
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _emailController.dispose();
+    _passwordController.dispose();
+    super.dispose();
+  }
 
   Future<void> _handleAuth() async {
+    final name = _nameController.text.trim();
     final email = _emailController.text.trim();
-    final password = _passwordController.text.trim();
+    final password = _passwordController.text;
 
-    if (email.isEmpty || password.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please fill in all fields')),
-      );
+    if (email.isEmpty || password.isEmpty || (!_isLogin && name.isEmpty)) {
+      showAppSnackBar(context, 'Please fill in all fields', isError: true);
       return;
     }
-
-    if (!email.endsWith(_institutionalDomain)) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Only $_institutionalDomain emails are allowed')),
-      );
+    if (!AuthService.isInstitutional(email)) {
+      showAppSnackBar(context, 'Only $_institutionalDomain emails are allowed', isError: true);
       return;
     }
 
     setState(() => _isLoading = true);
-
     try {
-      final String targetRole = widget.initialRole.toLowerCase().replaceAll(' personnel', '');
-
       if (_isLogin) {
-        UserCredential credential = await FirebaseAuth.instance.signInWithEmailAndPassword(
-          email: email,
-          password: password,
-        );
-        if (credential.user != null) {
-          await FirebaseFirestore.instance.collection('users').doc(credential.user!.uid).set({
-            'role': targetRole,
-            'status': targetRole == 'customer' ? 'Active' : 'Pending Review',
-            'updatedAt': FieldValue.serverTimestamp(),
-          }, SetOptions(merge: true));
-        }
+        await AuthService.signInWithEmail(email, password);
       } else {
-        UserCredential credential = await FirebaseAuth.instance.createUserWithEmailAndPassword(
-          email: email,
-          password: password,
-        );
-        
-        // Save user role and info to Firestore
-        await FirebaseFirestore.instance.collection('users').doc(credential.user!.uid).set({
-          'name': email.split('@')[0], // Default name from email
-          'email': email,
-          'role': targetRole,
-          'status': targetRole == 'customer' ? 'Active' : 'Pending Review',
-          'createdAt': FieldValue.serverTimestamp(),
-        });
+        await AuthService.registerWithEmail(name: name, email: email, password: password);
       }
-      
-      if (mounted) {
-        if (targetRole == 'vendor') {
-          Navigator.pushNamedAndRemoveUntil(context, '/vendor-home', (route) => false);
-        } else if (targetRole == 'delivery') {
-          Navigator.pushNamedAndRemoveUntil(context, '/delivery-main', (route) => false);
-        } else {
-          Navigator.pushNamedAndRemoveUntil(context, '/customer-main', (route) => false);
-        }
-      }
-    } on FirebaseAuthException catch (e) {
-      if (mounted) {
-        String errorMessage = 'Authentication failed';
-        if (e.code == 'user-not-found') {
-          errorMessage = 'No user found with this institutional email.';
-        } else if (e.code == 'wrong-password') {
-          errorMessage = 'Incorrect password. Please try again.';
-        } else if (e.code == 'invalid-email') {
-          errorMessage = 'The email address is not valid.';
-        } else {
-          errorMessage = e.message ?? 'An unknown error occurred.';
-        }
-        
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(errorMessage),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
+      // The router takes over (email verification, profile picker or module).
+      if (mounted) Navigator.of(context).popUntil((route) => route.isFirst);
+    } on AuthException catch (e) {
+      if (mounted) showAppSnackBar(context, e.message, isError: true);
+    } catch (e) {
+      if (mounted) showAppSnackBar(context, 'Authentication failed. ${friendlyError(e)}', isError: true);
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -108,14 +65,15 @@ class _LoginScreenState extends State<LoginScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: Text(_isLogin ? 'Login' : 'Register')),
-      body: Padding(
+      body: SingleChildScrollView(
         padding: const EdgeInsets.all(24.0),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Text(
-              'Access for ${widget.initialRole}',
-              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            const SizedBox(height: 24),
+            const Text(
+              'PaddlerBites account',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 8),
             Text(
@@ -123,6 +81,14 @@ class _LoginScreenState extends State<LoginScreen> {
               style: const TextStyle(color: Colors.grey),
             ),
             const SizedBox(height: 32),
+            if (!_isLogin) ...[
+              TextField(
+                controller: _nameController,
+                decoration: const InputDecoration(labelText: 'Full name'),
+                textCapitalization: TextCapitalization.words,
+              ),
+              const SizedBox(height: 16),
+            ],
             TextField(
               controller: _emailController,
               decoration: const InputDecoration(
@@ -150,8 +116,8 @@ class _LoginScreenState extends State<LoginScreen> {
               ),
             TextButton(
               onPressed: () => setState(() => _isLogin = !_isLogin),
-              child: Text(_isLogin 
-                ? 'Don\'t have an account? Register' 
+              child: Text(_isLogin
+                ? 'Don\'t have an account? Register'
                 : 'Already have an account? Login'),
             ),
           ],

@@ -1,10 +1,39 @@
 import 'package:flutter/material.dart';
-import '../core/theme.dart';
+import 'package:provider/provider.dart';
+import '../core/errors.dart';
+import '../core/app_theme.dart';
+import '../models/app_user.dart';
+import '../providers/user_provider.dart';
+import '../services/auth_service.dart';
+import '../services/catalog_service.dart';
+import '../services/user_service.dart';
+import '../widgets/custom_dialogs.dart';
 import 'delivery/delivery_registration_screen.dart';
+import 'pending_approval_screen.dart';
 import 'vendor/vendor_setup_screen.dart';
-import 'welcome_screen.dart';
-import 'auth/login_screen.dart';
 
+/// Opens the vendor or delivery application form (prefilled when resubmitting).
+Future<void> openRoleApplication(BuildContext context, UserRole role, {bool replace = false}) async {
+  final Widget form;
+  if (role == UserRole.vendor) {
+    final stall = await CatalogService.getStall(UserService.uid);
+    form = VendorSetupScreen(existing: stall, isApplication: true);
+  } else {
+    form = const DeliveryRegistrationScreen();
+  }
+  if (!context.mounted) return;
+  final route = MaterialPageRoute(builder: (context) => form);
+  if (replace) {
+    Navigator.pushReplacement(context, route);
+  } else {
+    Navigator.push(context, route);
+  }
+}
+
+/// "Select profile" screen, shown after login when the account has more than
+/// one approved role, and from each module's "Switch role" option.
+/// Unapproved roles show their status and lead to [PendingApprovalScreen] or
+/// the application form.
 class RoleSelectionScreen extends StatefulWidget {
   const RoleSelectionScreen({super.key});
 
@@ -13,39 +42,83 @@ class RoleSelectionScreen extends StatefulWidget {
 }
 
 class _RoleSelectionScreenState extends State<RoleSelectionScreen> {
-  final PageController _pageController = PageController();
-  int _currentPage = 0;
+  late final PageController _pageController;
+  late int _currentPage;
+  bool _isOpening = false;
 
-  final List<Map<String, String>> roles = [
-    {
-      'name': 'Customer',
-      'icon': 'assets/images/customer_icon.png',
-    },
-    {
-      'name': 'Delivery Personnel',
-      'icon': 'assets/images/delivery_personnel_icon.png',
-    },
-    {
-      'name': 'Vendor',
-      'icon': 'assets/images/vendor_icon.png',
-    },
-  ];
+  final List<UserRole> roles = UserRole.values;
+
+  @override
+  void initState() {
+    super.initState();
+    final active = Provider.of<UserProvider>(context, listen: false).profile?.activeRole;
+    _currentPage = active == null ? 0 : roles.indexOf(active);
+    _pageController = PageController(initialPage: _currentPage);
+  }
+
+  @override
+  void dispose() {
+    _pageController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _continue(AppUser profile) async {
+    final role = roles[_currentPage];
+    final status = profile.statusOf(role);
+
+    if (status == RoleStatus.approved) {
+      setState(() => _isOpening = true);
+      try {
+        await AuthService.setActiveRole(profile, role);
+        // The router swaps to the module; close the picker if it was pushed.
+        if (mounted) Navigator.of(context).popUntil((route) => route.isFirst);
+      } catch (e) {
+        if (mounted) showAppSnackBar(context, friendlyError(e), isError: true);
+      } finally {
+        if (mounted) setState(() => _isOpening = false);
+      }
+    } else if (status == null && role.requiresApproval) {
+      await openRoleApplication(context, role);
+    } else {
+      Navigator.push(context, MaterialPageRoute(builder: (context) => PendingApprovalScreen(role: role)));
+    }
+  }
+
+  String _buttonLabel(UserRole role, String? status) {
+    if (status == RoleStatus.approved) return 'Continue as ${role.label}';
+    if (status == null) return 'Apply as ${role.label}';
+    return 'View application status';
+  }
 
   @override
   Widget build(BuildContext context) {
+    final profile = context.watch<UserProvider>().profile;
+    if (profile == null) return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    final firstName = profile.name.split(' ').first;
+
     return Scaffold(
       backgroundColor: AppTheme.backgroundColor,
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
-        // Shield icon removed here
+        automaticallyImplyLeading: Navigator.canPop(context),
+        actions: [
+          IconButton(
+            tooltip: 'Log out',
+            icon: const Icon(Icons.logout, color: Colors.redAccent),
+            onPressed: () async {
+              await AuthService.signOut();
+              if (context.mounted) Navigator.of(context).popUntil((route) => route.isFirst);
+            },
+          ),
+        ],
       ),
       body: Column(
         children: [
           const SizedBox(height: 20),
-          const Text(
-            'Login as',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w500),
+          Text(
+            firstName.isEmpty ? 'Choose your profile' : 'Hi $firstName, choose your profile',
+            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w500),
           ),
           const SizedBox(height: 30),
           Expanded(
@@ -58,6 +131,7 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen> {
               },
               itemCount: roles.length,
               itemBuilder: (context, index) {
+                final role = roles[index];
                 return AnimatedScale(
                   scale: _currentPage == index ? 1.0 : 0.9,
                   duration: const Duration(milliseconds: 300),
@@ -73,14 +147,16 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen> {
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
                         Image.asset(
-                          roles[index]['icon']!,
+                          role.iconAsset,
                           height: 200,
                         ),
                         const SizedBox(height: 40),
                         Text(
-                          roles[index]['name']!,
+                          role.label,
                           style: Theme.of(context).textTheme.headlineMedium,
                         ),
+                        const SizedBox(height: 12),
+                        RoleStatusChip(status: profile.statusOf(role)),
                       ],
                     ),
                   ),
@@ -110,23 +186,37 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen> {
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 40),
             child: ElevatedButton(
-              onPressed: () {
-                final selectedRole = roles[_currentPage]['name']!;
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => WelcomeScreen(selectedRole: selectedRole),
-                  ),
-                );
-              },
+              onPressed: _isOpening ? null : () => _continue(profile),
               style: ElevatedButton.styleFrom(
                 minimumSize: const Size(double.infinity, 56),
               ),
-              child: const Text('Get Started'),
+              child: Text(_buttonLabel(roles[_currentPage], profile.statusOf(roles[_currentPage]))),
             ),
           ),
         ],
       ),
+    );
+  }
+}
+
+/// Small status badge for a role card.
+class RoleStatusChip extends StatelessWidget {
+  final String? status;
+  const RoleStatusChip({super.key, required this.status});
+
+  @override
+  Widget build(BuildContext context) {
+    final (String label, MaterialColor color) = switch (status) {
+      RoleStatus.approved => ('Approved', Colors.green),
+      RoleStatus.pending => ('Pending admin approval', Colors.orange),
+      RoleStatus.rejected => ('Not approved', Colors.red),
+      RoleStatus.suspended => ('Suspended', Colors.red),
+      _ => ('Not registered', Colors.grey),
+    };
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(color: color.shade50, borderRadius: BorderRadius.circular(20)),
+      child: Text(label, style: TextStyle(color: color.shade700, fontSize: 12, fontWeight: FontWeight.bold)),
     );
   }
 }

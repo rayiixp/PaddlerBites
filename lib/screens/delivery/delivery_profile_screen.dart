@@ -1,13 +1,58 @@
 import 'package:flutter/material.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:google_sign_in/google_sign_in.dart';
-import '../../core/theme.dart';
+import 'package:provider/provider.dart';
+import '../../core/app_theme.dart';
+import '../../models/app_user.dart';
+import '../../providers/user_provider.dart';
+import '../../services/user_service.dart';
+import '../../widgets/custom_dialogs.dart';
+import '../../widgets/premium_paddling_boat.dart';
 
 class DeliveryProfileScreen extends StatelessWidget {
-  const DeliveryProfileScreen({super.key});
+  /// Switches to the Wallet tab, which lists delivery history.
+  final VoidCallback? onOpenWallet;
+  const DeliveryProfileScreen({super.key, this.onOpenWallet});
+
+  static const _modes = ['On foot', 'Bicycle', 'Motorcycle'];
+
+  Future<void> _pickMode(BuildContext context, String current) async {
+    final mode = await showModalBottomSheet<String>(
+      context: context,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      builder: (context) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Padding(
+                padding: EdgeInsets.only(bottom: 8),
+                child: Text('Delivery mode', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              ),
+              ..._modes.map((mode) => ListTile(
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 24),
+                    title: Text(mode),
+                    trailing: mode == current
+                        ? const Icon(Icons.check_circle, color: AppTheme.secondaryColor)
+                        : Icon(Icons.circle_outlined, color: Colors.grey.shade300),
+                    onTap: () => Navigator.pop(context, mode),
+                  )),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (mode != null && context.mounted) {
+      await runGuarded(context, () => UserService.currentUserRef.update({'deliveryMode': mode}), success: 'Delivery mode set to $mode');
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
+    final userData = context.watch<UserProvider>().userData ?? {};
+    final mode = userData['deliveryMode'] ?? 'On foot';
+    final deliveryStatus = context.watch<UserProvider>().profile?.deliveryStatus;
+    final isVerified = deliveryStatus == RoleStatus.approved;
+
     return Scaffold(
       backgroundColor: AppTheme.backgroundColor, // Matches the theme background color
       appBar: AppBar(
@@ -24,36 +69,67 @@ class DeliveryProfileScreen extends StatelessWidget {
         child: Column(
           children: [
             // Header Profile Avatar and Details
-            const CircleAvatar(radius: 45, backgroundColor: Colors.grey),
+            const PremiumPaddlingBoatAnimation(size: 90),
             const SizedBox(height: 12),
-            const Text('Juan Cruz', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.black)),
+            Text(userData['name'] ?? 'Rider', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.black)),
             const SizedBox(height: 2),
-            const Text('juan.cruz@csucc.edu.ph', style: TextStyle(color: Colors.grey, fontSize: 14)),
+            Text(userData['email'] ?? '', style: const TextStyle(color: Colors.grey, fontSize: 14)),
             const SizedBox(height: 8),
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-              decoration: BoxDecoration(color: Colors.green.shade50, borderRadius: BorderRadius.circular(12)),
-              child: const Text('Verified', style: TextStyle(color: Colors.green, fontSize: 12, fontWeight: FontWeight.bold)),
+              decoration: BoxDecoration(
+                color: isVerified ? Colors.green.shade50 : Colors.orange.shade50,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Text(isVerified ? 'Verified' : (deliveryStatus ?? 'Pending'),
+                  style: TextStyle(color: isVerified ? Colors.green : Colors.orange, fontSize: 12, fontWeight: FontWeight.bold)),
             ),
             const SizedBox(height: 28),
 
             // Section 1: Main Options Grouped in a Single White Card
             _buildSection([
-              _buildProfileOption(context, Icons.history, 'Delivery history'),
-              _buildProfileOption(context, Icons.directions_walk, 'Mode: On foot'),
-              _buildProfileOption(context, Icons.payment, 'Payout method (GCash)'),
+              _buildProfileOption(context, Icons.history, 'Delivery history', onTap: onOpenWallet),
+              _buildProfileOption(context, Icons.kayaking, 'Mode: $mode',
+                  onTap: () => _pickMode(context, mode)),
+              _buildProfileOption(
+                context,
+                Icons.payment,
+                (userData['payoutAccount'] ?? '').isEmpty
+                    ? 'Payout method (GCash)'
+                    : 'Payout: GCash ${userData['payoutAccount']}',
+                onTap: () async {
+                  final account = await showTextInputDialog(
+                    context,
+                    title: 'GCash payout number',
+                    initialValue: userData['payoutAccount'] ?? '',
+                    hint: '09XX-XXX-XXXX',
+                    keyboardType: TextInputType.phone,
+                  );
+                  if (account != null && context.mounted) {
+                    await runGuarded(context, () => UserService.currentUserRef.update({'payoutAccount': account}),
+                        success: 'Payout number saved');
+                  }
+                },
+              ),
             ]),
             const SizedBox(height: 16),
 
             // Section 2: Toggle Option Grouped in a Single White Card
             _buildSection([
-              _buildToggleOption(context, Icons.notifications_active_outlined, 'New delivery alerts', true),
+              _buildToggleOption(
+                context,
+                Icons.notifications_active_outlined,
+                'New delivery alerts',
+                userData['deliveryAlerts'] ?? true,
+                (v) => runGuarded(context, () => UserService.currentUserRef.update({'deliveryAlerts': v})),
+              ),
             ]),
             const SizedBox(height: 16),
 
             // Section 3: Support Option Grouped in a Single White Card
             _buildSection([
-              _buildProfileOption(context, Icons.help_outline, 'Help & support'),
+              _buildProfileOption(context, Icons.help_outline, 'Help & support',
+                  onTap: () => showComingSoon(context, 'In-app support')),
             ]),
             const SizedBox(height: 16),
 
@@ -64,7 +140,7 @@ class DeliveryProfileScreen extends StatelessWidget {
                 Icons.swap_horiz,
                 'Switch role',
                 onTap: () {
-                  Navigator.of(context).pushNamedAndRemoveUntil('/role-selection', (route) => false);
+                  Navigator.pushNamed(context, '/role-selection');
                 },
               ),
               _buildProfileOption(
@@ -73,10 +149,9 @@ class DeliveryProfileScreen extends StatelessWidget {
                 'Logout',
                 textColor: Colors.redAccent,
                 onTap: () async {
-                  await GoogleSignIn().signOut();
-                  await FirebaseAuth.instance.signOut();
+                  await UserService.signOut();
                   if (context.mounted) {
-                    Navigator.of(context).pushNamedAndRemoveUntil('/role-selection', (route) => false);
+                    Navigator.of(context).pushNamedAndRemoveUntil('/', (route) => false);
                   }
                 },
               ),
@@ -123,7 +198,7 @@ class DeliveryProfileScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildToggleOption(BuildContext context, IconData icon, String title, bool value) {
+  Widget _buildToggleOption(BuildContext context, IconData icon, String title, bool value, ValueChanged<bool> onChanged) {
     return ListTile(
       contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
       leading: Icon(icon, color: Colors.black87, size: 24),
@@ -135,7 +210,7 @@ class DeliveryProfileScreen extends StatelessWidget {
         scale: 0.85,
         child: Switch(
           value: value,
-          onChanged: (v) {},
+          onChanged: onChanged,
           activeColor: Colors.white,
           activeTrackColor: Colors.black,
           inactiveThumbColor: Colors.white,

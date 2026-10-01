@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:provider/provider.dart';
-import '../../core/theme.dart';
+import '../../core/app_theme.dart';
 import '../../providers/cart_provider.dart';
+import '../../widgets/app_image.dart';
+import '../../widgets/custom_dialogs.dart';
 
 class CartScreen extends StatelessWidget {
   const CartScreen({super.key});
@@ -68,8 +70,8 @@ class CartScreen extends StatelessWidget {
                       docId: doc.id,
                       name: data['name'] ?? 'Unknown',
                       price: (data['price'] ?? 0.0).toDouble(),
-                      stall: data['stallName'] ?? 'Snackpreneurs', // Defaulted to match photo
-                      image: data['imageUrl'] ?? 'https://images.unsplash.com/photo-1568901346375-23c9450c58cd?w=200&q=80',
+                      stall: data['stallName'] ?? '',
+                      image: data['imageUrl'] ?? '',
                       quantity: data['qty'] ?? 1,
                     );
                   },
@@ -159,7 +161,7 @@ class _CartItemCardState extends State<CartItemCard> {
                 children: [
                   ClipRRect(
                     borderRadius: BorderRadius.circular(8),
-                    child: Image.network(widget.image, width: 50, height: 50, fit: BoxFit.cover),
+                    child: AppNetworkImage(url: widget.image, width: 50, height: 50),
                   ),
                   const SizedBox(width: 16),
                   Expanded(
@@ -175,14 +177,14 @@ class _CartItemCardState extends State<CartItemCard> {
                   Row(
                     children: [
                       _buildStepButton(Icons.remove, () {
-                        cartProvider.decrementQuantity(widget.docId, widget.quantity);
+                        runGuarded(context, () => cartProvider.decrementQuantity(widget.docId, widget.quantity));
                       }),
                       Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 16),
                         child: Text('${widget.quantity}', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w500)),
                       ),
                       _buildStepButton(Icons.add, () {
-                        cartProvider.incrementQuantity(widget.docId, widget.quantity);
+                        runGuarded(context, () => cartProvider.incrementQuantity(widget.docId, widget.quantity));
                       }),
                     ],
                   ),

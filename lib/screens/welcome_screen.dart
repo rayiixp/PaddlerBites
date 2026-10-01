@@ -1,14 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:google_sign_in/google_sign_in.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_svg/flutter_svg.dart';
-import '../core/theme.dart';
+import '../core/errors.dart';
+import '../core/app_theme.dart';
+import '../services/auth_service.dart';
+import '../widgets/custom_dialogs.dart';
+import 'auth/login_screen.dart';
 
+/// Login entry point, shown by the router whenever no one is signed in.
 class WelcomeScreen extends StatelessWidget {
-  final String selectedRole;
-  const WelcomeScreen({super.key, this.selectedRole = 'Customer'});
+  const WelcomeScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -89,63 +90,14 @@ class WelcomeScreen extends StatelessWidget {
                       // Google Login Button (Updated to use AppTheme.primaryColor)
                       OutlinedButton(
                         onPressed: () async {
-                          final GoogleSignIn googleSignIn = GoogleSignIn();
                           try {
-                            final GoogleSignInAccount? googleUser = await googleSignIn.signIn();
-                            if (googleUser == null) return;
-
-                            // Domain validation (@csucc.edu.ph)
-                            if (!googleUser.email.endsWith('@csucc.edu.ph')) {
-                              await googleSignIn.disconnect();
-                              if (context.mounted) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(
-                                    content: Text('Access Denied: Please use your official institutional email address.'),
-                                    backgroundColor: Colors.red,
-                                    duration: Duration(seconds: 5),
-                                  ),
-                                );
-                              }
-                              return;
-                            }
-
-                            final GoogleSignInAuthentication googleAuth = await googleUser.authentication;
-                            final AuthCredential credential = GoogleAuthProvider.credential(
-                              accessToken: googleAuth.accessToken,
-                              idToken: googleAuth.idToken,
-                            );
-
-                            final UserCredential userCredential = await FirebaseAuth.instance.signInWithCredential(credential);
-                            final User? user = userCredential.user;
-
-                            if (user != null) {
-                              final String targetRole = selectedRole.toLowerCase().replaceAll(' personnel', '');
-
-                              // Create or update user role and details in Firestore
-                              await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
-                                'name': user.displayName ?? 'User',
-                                'email': user.email,
-                                'role': targetRole,
-                                'status': targetRole == 'customer' ? 'Active' : 'Pending Review',
-                                'updatedAt': FieldValue.serverTimestamp(),
-                              }, SetOptions(merge: true));
-
-                              if (context.mounted) {
-                                if (targetRole == 'vendor') {
-                                  Navigator.pushNamedAndRemoveUntil(context, '/vendor-home', (route) => false);
-                                } else if (targetRole == 'delivery') {
-                                  Navigator.pushNamedAndRemoveUntil(context, '/delivery-main', (route) => false);
-                                } else {
-                                  Navigator.pushNamedAndRemoveUntil(context, '/customer-main', (route) => false);
-                                }
-                              }
-                            }
+                            // Only @csucc.edu.ph accounts get through; the router then
+                            // opens the right module or the profile picker.
+                            await AuthService.signInWithGoogle();
+                          } on AuthException catch (e) {
+                            if (context.mounted) showAppSnackBar(context, e.message, isError: true);
                           } catch (e) {
-                            if (context.mounted) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(content: Text('Authentication failed: $e')),
-                              );
-                            }
+                            if (context.mounted) showAppSnackBar(context, 'Authentication failed. ${friendlyError(e)}', isError: true);
                           }
                         },
                         style: OutlinedButton.styleFrom(
@@ -178,7 +130,18 @@ class WelcomeScreen extends StatelessWidget {
                           ],
                         ),
                       ),
-                      const SizedBox(height: 40),
+                      const SizedBox(height: 12),
+                      TextButton(
+                        onPressed: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(builder: (context) => const LoginScreen()),
+                        ),
+                        child: const Text(
+                          'Use email and password instead',
+                          style: TextStyle(color: Colors.white, decoration: TextDecoration.underline, decorationColor: Colors.white),
+                        ),
+                      ),
+                      const SizedBox(height: 28),
                       const Text(
                         'Campus eats, delivered by your fellow Paddlers',
                         style: TextStyle(

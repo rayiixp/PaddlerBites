@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import '../models/models.dart';
 
 class CartProvider with ChangeNotifier {
   final FirebaseFirestore _db = FirebaseFirestore.instance;
@@ -42,24 +43,19 @@ class CartProvider with ChangeNotifier {
     }
   }
 
-  // Add to cart helper (to be used from Food Detail Screen)
-  Future<void> addToCart({
-    required String itemId,
-    required String name,
-    required double price,
-    required String stallName,
-    required String imageUrl,
-  }) async {
-    final doc = await _cartRef.doc(itemId).get();
+  // Add to cart; the cart doc id is the menu item id so repeats stack up
+  Future<void> addToCart(FoodModel food, {int qty = 1}) async {
+    final doc = await _cartRef.doc(food.id).get();
     if (doc.exists) {
-      await _cartRef.doc(itemId).update({'qty': FieldValue.increment(1)});
+      await _cartRef.doc(food.id).update({'qty': FieldValue.increment(qty), 'price': food.price});
     } else {
-      await _cartRef.doc(itemId).set({
-        'name': name,
-        'price': price,
-        'qty': 1,
-        'stallName': stallName,
-        'imageUrl': imageUrl,
+      await _cartRef.doc(food.id).set({
+        'name': food.name,
+        'price': food.price,
+        'qty': qty,
+        'stallId': food.stallId,
+        'stallName': food.stallName,
+        'imageUrl': food.imageUrl,
         'addedAt': FieldValue.serverTimestamp(),
       });
     }

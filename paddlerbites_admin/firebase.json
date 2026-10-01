@@ -1,1 +1,48 @@
-{"flutter":{"platforms":{"dart":{"lib/firebase_options.dart":{"projectId":"paddlerbites-1453d","configurations":{"web":"1:1049652420108:web:14e83225e349a7b81c9829"}}}}}}
+{
+  "flutter": {
+    "platforms": {
+      "dart": {
+        "lib/firebase_options.dart": {
+          "projectId": "paddlerbites-1453d",
+          "configurations": {
+            "web": "1:1049652420108:web:14e83225e349a7b81c9829"
+          }
+        }
+      }
+    }
+  },
+  "hosting": {
+    "public": "build/web",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ],
+    "rewrites": [
+      {
+        "source": "**",
+        "destination": "/index.html"
+      }
+    ],
+    "headers": [
+      {
+        "source": "**/*.@(js|wasm|json|png|jpg|svg|ttf|otf|woff2)",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "public, max-age=3600"
+          }
+        ]
+      },
+      {
+        "source": "/index.html",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-cache"
+          }
+        ]
+      }
+    ]
+  }
+}

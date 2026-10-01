@@ -12,6 +12,7 @@ android {
     namespace = "com.example.paddlerbites"
     compileSdk = 36
     buildToolsVersion = "35.0.0"
+    ndkVersion = "28.2.13676358"
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

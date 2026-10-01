@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
-import '../../core/theme.dart';
+import '../../core/app_theme.dart';
+import '../../widgets/custom_dialogs.dart';
+import '../../widgets/voice_order_sheet.dart';
 import 'home_screen.dart';
 import 'stalls_directory_screen.dart';
 import 'cart_screen.dart';
@@ -15,12 +17,32 @@ class MainWrapper extends StatefulWidget {
 class _MainWrapperState extends State<MainWrapper> {
   int _selectedIndex = 0;
 
-  final List<Widget> _screens = [
-    const HomeScreen(),
+  late final List<Widget> _screens = [
+    HomeScreen(onSearchTap: () => setState(() => _selectedIndex = 1)),
     const StallsDirectoryScreen(),
     const CartScreen(),
     const ProfileScreen(),
   ];
+
+  /// The voice order in progress (its sheet is open).
+  VoiceOrderController? _voice;
+
+  /// Mic FAB, tap-to-toggle: the first tap starts recording and opens the
+  /// voice sheet; the next tap (the sheet's big mic, or this button) stops
+  /// and sends it. After the customer confirms, jump to the cart.
+  Future<void> _onMicTap() async {
+    final current = _voice;
+    if (current != null) {
+      current.finishRecording(); // ignored unless it's actually recording
+      return;
+    }
+    final voice = _voice = VoiceOrderController();
+    final added = await VoiceOrderSheet.show(context, voice);
+    _voice = null;
+    if (added == null || added == 0 || !mounted) return;
+    setState(() => _selectedIndex = 2);
+    showAppSnackBar(context, 'Added $added item${added == 1 ? '' : 's'} to your cart');
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -90,9 +112,7 @@ class _MainWrapperState extends State<MainWrapper> {
                     const SizedBox(width: 12),
                     // Floating Mic Button
                     GestureDetector(
-                      onTap: () {
-                        // Voice Command Logic
-                      },
+                      onTap: _onMicTap,
                       child: Container(
                         height: 60, // Reduced height
                         width: 60,  // Reduced width to keep it perfectly circular
